@@ -43,7 +43,7 @@ ssh user@your-server-ip
 ```
 It should ask for your **key passphrase**, not your server password.
 
-> ⚠️ Do not continue until this works. Keep your old session open.
+> ⚠️ **Keep your original session open while testing.** If something goes wrong you can still fix it. Only close session 1 once session 2 is confirmed working.
 
 ### Step 4 — Disable Password & Root Login
 
@@ -54,9 +54,26 @@ sudo sed -i 's/.*PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/s
 sudo sed -i 's/.*PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
 ```
 
-Verify:
+### Step 5 — Harden sshd_config Further
+
+Add these lines to `/etc/ssh/sshd_config` to limit reconnection attempts, kill stale sessions, and stop your validator being used as a jump box:
+
 ```bash
-sudo grep -E "PasswordAuthentication|PubkeyAuthentication|PermitRootLogin" /etc/ssh/sshd_config
+sudo tee -a /etc/ssh/sshd_config << 'SSHEOF'
+MaxAuthTries 3
+ClientAliveInterval 300
+ClientAliveCountMax 2
+AllowTcpForwarding no
+X11Forwarding no
+Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com
+MACs hmac-sha2-512-etm@openssh.com
+SSHEOF
+```
+
+### Step 6 — Verify and Restart
+
+```bash
+sudo grep -E "PasswordAuthentication|PubkeyAuthentication|PermitRootLogin|MaxAuthTries|AllowTcpForwarding" /etc/ssh/sshd_config
 ```
 
 Expected output:
@@ -64,6 +81,8 @@ Expected output:
 PermitRootLogin no
 PubkeyAuthentication yes
 PasswordAuthentication no
+MaxAuthTries 3
+AllowTcpForwarding no
 ```
 
 Restart SSH:
@@ -71,7 +90,7 @@ Restart SSH:
 sudo systemctl restart ssh
 ```
 
-### Step 5 — Final Test
+### Step 7 — Final Test
 
 Open a new terminal and SSH in to confirm it works. If it connects with your key passphrase, you're done with Part 1.
 
@@ -81,18 +100,28 @@ Open a new terminal and SSH in to confirm it works. If it connects with your key
 
 UFW controls what ports are open and who can access them.
 
+### Set Default Policies First
+
+```bash
+# Deny all incoming by default, allow all outgoing
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+```
+
+This means any port not explicitly allowed is blocked automatically.
+
 ### Basic Setup
 
 ```bash
-# Enable UFW
-sudo ufw enable
-
 # Allow SSH (do this FIRST or you'll lock yourself out)
 sudo ufw allow 22
 
 # Allow validator gossip/TPU ports (required for consensus)
 sudo ufw allow 8000:8025/udp
 sudo ufw allow 8000:8025/tcp
+
+# Enable UFW
+sudo ufw enable
 ```
 
 ### Restrict RPC Ports
@@ -100,11 +129,11 @@ sudo ufw allow 8000:8025/tcp
 Your RPC ports (8899/8900) should only be accessible from your own IP — not the public internet:
 
 ```bash
-# Allow your IP range on RPC ports
+# Allow your IP range on RPC ports (replace with your actual IP range)
 sudo ufw allow from YOUR.IP.0.0/16 to any port 8899
 sudo ufw allow from YOUR.IP.0.0/16 to any port 8900
 
-# Deny everyone else
+# Deny everyone else — add AFTER the allow rules
 sudo ufw deny 8899
 sudo ufw deny 8900
 ```
@@ -125,6 +154,7 @@ sudo ufw status numbered
 | Deleting rules low-to-high | Rule numbers shift, you delete the wrong ones |
 | Restricting port 22 to a dynamic IP | IP changes, locked out |
 | Leaving `8900/tcp ALLOW Anywhere` | RPC wide open to the internet |
+| Skipping default deny policy | Unspecified ports silently open |
 
 Always delete UFW rules **highest number first** to avoid numbering shifts.
 
@@ -150,7 +180,7 @@ sudo fail2ban-client status sshd
 
 You'll see currently banned IPs and total failed attempts. Ours had **9 IPs banned within minutes** of installing.
 
-### Optional — Tighten the Settings
+### Tighten the Settings
 
 Create a local config (overrides defaults safely):
 ```bash
@@ -161,10 +191,13 @@ Add:
 ```ini
 [sshd]
 enabled = true
+port = 22
 maxretry = 3
 findtime = 600
 bantime = 3600
 ```
+
+> Note: Always specify `port = 22` (or `port = ssh`) in `jail.local` to avoid edge cases where Fail2ban checks the wrong port.
 
 This bans IPs after **3 failed attempts** within 10 minutes for **1 hour**. Restart to apply:
 ```bash
@@ -201,6 +234,7 @@ Your private key lives at `~/.ssh/id_ed25519` on your local machine.
 - Back it up somewhere secure
 - Never share it
 - Never copy it to the server
+- **Always test your key login before closing your original SSH session**
 - If you lose it with no other access method, you'll need console/KVM access from your hosting provider
 
 ---
