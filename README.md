@@ -243,6 +243,7 @@ sudo tee /etc/logrotate.d/fail2ban-custom > /dev/null << 'EOF'
 /var/log/fail2ban.log {
     daily
     rotate 7
+    maxsize 50M
     compress
     delaycompress
     missingok
@@ -259,6 +260,7 @@ sudo tee /etc/logrotate.d/validator-auth > /dev/null << 'EOF'
 /var/log/auth.log {
     rotate 4
     weekly
+    maxsize 50M
     compress
     delaycompress
     missingok
