@@ -66,20 +66,20 @@ ClientAliveInterval 300
 ClientAliveCountMax 2
 AllowTcpForwarding no
 X11Forwarding no
-AllowUsers your-username
+AllowGroups sudo
 Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com
 MACs hmac-sha2-512-etm@openssh.com
 SSHEOF
 ```
 
-> Replace `your-username` with your actual SSH user (e.g. `x1`, `ubuntu`, `root`). `AllowUsers` explicitly whitelists which OS users can SSH in — prevents a future user-creation slip from opening a hole.
+> `AllowGroups sudo` whitelists any user in the sudo group instead of hardcoding a username. This means if you add a second user later, just add them to sudo and they're automatically allowed — no sshd_config update needed.
 
 > `MaxStartups 10:30:100` limits concurrent unauthenticated connections. Without it, someone can open hundreds of SSH connections and DoS your ability to SSH in during an incident.
 
 ### Step 6 — Verify and Restart
 
 ```bash
-sudo grep -E "PasswordAuthentication|PubkeyAuthentication|PermitRootLogin|MaxAuthTries|MaxStartups|AllowTcpForwarding|AllowUsers" /etc/ssh/sshd_config
+sudo grep -E "PasswordAuthentication|PubkeyAuthentication|PermitRootLogin|MaxAuthTries|MaxStartups|AllowTcpForwarding|AllowGroups" /etc/ssh/sshd_config
 ```
 
 Expected output:
@@ -90,7 +90,7 @@ PasswordAuthentication no
 MaxAuthTries 3
 MaxStartups 10:30:100
 AllowTcpForwarding no
-AllowUsers your-username
+AllowGroups sudo
 ```
 
 Restart SSH:
@@ -156,7 +156,7 @@ UFW logs every blocked packet to `kern.log`. On a validator with bots constantly
 sudo ufw logging low
 ```
 
-Also add a rate limit in `/etc/rsyslog.conf` to prevent kernel log flooding:
+Also suppress UFW block noise in rsyslog:
 
 ```bash
 echo ':msg, contains, "UFW BLOCK" ~' | sudo tee -a /etc/rsyslog.conf
@@ -274,6 +274,58 @@ EOF
 
 ---
 
+## 🔍 Part 4 — Monitor SSH Access
+
+With password auth disabled there's nothing to brute force, but you still want to know who logs in and when. Failed key auth means someone has your public key but not your private key — worth knowing about.
+
+```bash
+# View last 30 SSH events
+sudo journalctl -u ssh -n 30 --no-pager
+
+# Watch live
+sudo journalctl -u ssh -f
+
+# Failed key attempts only
+sudo journalctl -u ssh -n 100 --no-pager | grep "Invalid\|Failed"
+```
+
+Pipe this into your monitoring stack or set up a cron alert if you want proactive notification.
+
+---
+
+## 🆘 Part 5 — Recovery
+
+> **Read this before you need it.** One wrong `AllowGroups` entry or a UFW rule applied while your IP changed and you're locked out. Know your escape routes before you're in a panic at 3am.
+
+**Option 1 — Your hosting provider's console:**
+Most providers (Hetzner, OVH, ServerNet, etc.) offer IPMI, iDRAC, or a browser-based KVM console. This gives you direct terminal access regardless of SSH or firewall state. Find it in your provider's control panel **now** and bookmark it.
+
+**Option 2 — Unban yourself via Fail2ban:**
+If you banned your own IP:
+```bash
+# From the provider console or another IP
+sudo fail2ban-client unban YOUR.IP.ADDRESS
+```
+
+**Option 3 — Fix a broken UFW rule:**
+If you locked yourself out of SSH via UFW:
+```bash
+# Disable UFW entirely from the provider console
+sudo ufw disable
+# Fix your rules, then re-enable
+sudo ufw enable
+```
+
+**Option 4 — Fix a broken sshd_config:**
+If SSH won't start after a config change:
+```bash
+# Test config before restarting
+sudo sshd -t
+# Shows exactly which line is broken
+```
+
+---
+
 ## ✅ Full Security Checklist
 
 ```bash
@@ -297,6 +349,9 @@ sudo fail2ban-client status sshd
 
 # Are logs rotating?
 sudo logrotate --debug /etc/logrotate.d/validator-auth
+
+# Recent SSH activity
+sudo journalctl -u ssh -n 30 --no-pager
 ```
 
 ---
