@@ -223,11 +223,15 @@ EOF
 # Rotate auth logs — keep 4 weeks
 sudo tee /etc/logrotate.d/validator-auth << 'EOF'
 /var/log/auth.log {
-    weekly
     rotate 4
+    weekly
     compress
+    delaycompress
     missingok
     notifempty
+    postrotate
+        systemctl restart rsyslog
+    endscript
 }
 EOF
 ```
