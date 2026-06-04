@@ -56,24 +56,30 @@ sudo sed -i 's/.*PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd
 
 ### Step 5 — Harden sshd_config Further
 
-Add these lines to `/etc/ssh/sshd_config` to limit reconnection attempts, kill stale sessions, and stop your validator being used as a jump box:
+Add these lines to `/etc/ssh/sshd_config` to limit reconnection attempts, kill stale sessions, cap concurrent connections, and stop your validator being used as a jump box:
 
 ```bash
 sudo tee -a /etc/ssh/sshd_config << 'SSHEOF'
 MaxAuthTries 3
+MaxStartups 10:30:100
 ClientAliveInterval 300
 ClientAliveCountMax 2
 AllowTcpForwarding no
 X11Forwarding no
+AllowUsers your-username
 Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com
 MACs hmac-sha2-512-etm@openssh.com
 SSHEOF
 ```
 
+> Replace `your-username` with your actual SSH user (e.g. `x1`, `ubuntu`, `root`). `AllowUsers` explicitly whitelists which OS users can SSH in — prevents a future user-creation slip from opening a hole.
+
+> `MaxStartups 10:30:100` limits concurrent unauthenticated connections. Without it, someone can open hundreds of SSH connections and DoS your ability to SSH in during an incident.
+
 ### Step 6 — Verify and Restart
 
 ```bash
-sudo grep -E "PasswordAuthentication|PubkeyAuthentication|PermitRootLogin|MaxAuthTries|AllowTcpForwarding" /etc/ssh/sshd_config
+sudo grep -E "PasswordAuthentication|PubkeyAuthentication|PermitRootLogin|MaxAuthTries|MaxStartups|AllowTcpForwarding|AllowUsers" /etc/ssh/sshd_config
 ```
 
 Expected output:
@@ -82,7 +88,9 @@ PermitRootLogin no
 PubkeyAuthentication yes
 PasswordAuthentication no
 MaxAuthTries 3
+MaxStartups 10:30:100
 AllowTcpForwarding no
+AllowUsers your-username
 ```
 
 Restart SSH:
@@ -140,6 +148,21 @@ sudo ufw deny 8900
 
 > ⚠️ **Rule order matters** — ALLOW rules must appear BEFORE DENY rules for the same port. UFW processes top to bottom, first match wins.
 
+### UFW Logging
+
+UFW logs every blocked packet to `kern.log`. On a validator with bots constantly probing, this fills disk fast. Set logging to low:
+
+```bash
+sudo ufw logging low
+```
+
+Also add a rate limit in `/etc/rsyslog.conf` to prevent kernel log flooding:
+
+```bash
+echo ':msg, contains, "UFW BLOCK" ~' | sudo tee -a /etc/rsyslog.conf
+sudo systemctl reload rsyslog
+```
+
 ### Check Your Rules
 
 ```bash
@@ -155,6 +178,7 @@ sudo ufw status numbered
 | Restricting port 22 to a dynamic IP | IP changes, locked out |
 | Leaving `8900/tcp ALLOW Anywhere` | RPC wide open to the internet |
 | Skipping default deny policy | Unspecified ports silently open |
+| UFW logging set to high | kern.log fills disk on busy validators |
 
 Always delete UFW rules **highest number first** to avoid numbering shifts.
 
@@ -183,11 +207,13 @@ You'll see currently banned IPs and total failed attempts. Ours had **9 IPs bann
 ### Tighten the Settings
 
 Create a local config (overrides defaults safely):
+
 ```bash
 sudo nano /etc/fail2ban/jail.local
 ```
 
 Add:
+
 ```ini
 [sshd]
 enabled = true
@@ -201,29 +227,35 @@ bantime = 86400
 
 This bans IPs after **3 failed attempts** within 10 minutes for **24 hours** (`bantime = 86400`).
 
-> **Want to be more aggressive?** If you have a static IP, set `bantime = 604800` (7 days) or `bantime = -1` (permanent). Dynamic IP users (Starlink, CGNAT) should stick with 86400 — if your IP gets recycled from a previously banned bot, it self-heals within 24 hours instead of requiring manual intervention.
+> **Want to be more aggressive?** If you have a static IP, set `bantime = 604800` (7 days) or `bantime = -1` (permanent). Dynamic IP users (Starlink, CGNAT) should stick with `86400` — if your IP gets recycled from a previously banned bot, it self-heals within 24 hours instead of requiring manual intervention or KVM console access at 3am.
+
+Restart to apply:
+```bash
+sudo systemctl restart fail2ban
+```
 
 ### Protect Against Log Flooding (Logrotate)
 
-If someone spams your server with thousands of attempts, Fail2ban logs every one — your disk fills up and your validator crashes. Set up log rotation for both Fail2ban and auth logs:
+If someone spams your server with thousands of attempts, logs fill your disk and your validator crashes. Set up rotation for both Fail2ban and auth logs:
 
 ```bash
-# Rotate Fail2ban logs — keep 7 days
-sudo tee /etc/logrotate.d/fail2ban << 'EOF'
+sudo tee /etc/logrotate.d/fail2ban-custom > /dev/null << 'EOF'
 /var/log/fail2ban.log {
     daily
     rotate 7
     compress
+    delaycompress
     missingok
     notifempty
     postrotate
-        fail2ban-client flushlogs >/dev/null
+        fail2ban-client flushlogs > /dev/null
     endscript
 }
 EOF
+```
 
-# Rotate auth logs — keep 4 weeks
-sudo tee /etc/logrotate.d/validator-auth << 'EOF'
+```bash
+sudo tee /etc/logrotate.d/validator-auth > /dev/null << 'EOF'
 /var/log/auth.log {
     rotate 4
     weekly
@@ -232,16 +264,13 @@ sudo tee /etc/logrotate.d/validator-auth << 'EOF'
     missingok
     notifempty
     postrotate
-        systemctl restart rsyslog
+        systemctl reload rsyslog
     endscript
 }
 EOF
 ```
 
-Restart to apply:
-```bash
-sudo systemctl restart fail2ban
-```
+> Note: Use `reload rsyslog` not `restart` — restart drops syslog for a split second which can lose validator alerts or key auth events.
 
 ---
 
@@ -257,11 +286,17 @@ sudo grep "PermitRootLogin" /etc/ssh/sshd_config
 # Is password auth disabled?
 sudo grep "PasswordAuthentication" /etc/ssh/sshd_config
 
+# Is MaxStartups set?
+sudo grep "MaxStartups" /etc/ssh/sshd_config
+
 # Are your firewall rules clean?
 sudo ufw status numbered
 
 # Is Fail2ban running and banning?
 sudo fail2ban-client status sshd
+
+# Are logs rotating?
+sudo logrotate --debug /etc/logrotate.d/validator-auth
 ```
 
 ---
