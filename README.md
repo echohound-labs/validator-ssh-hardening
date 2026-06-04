@@ -203,9 +203,10 @@ This bans IPs after **3 failed attempts** within 10 minutes **permanently** (`ba
 
 ### Protect Against Log Flooding (Logrotate)
 
-If someone spams your server with thousands of attempts, Fail2ban logs every one — your disk fills up and your validator crashes. Set up log rotation:
+If someone spams your server with thousands of attempts, Fail2ban logs every one — your disk fills up and your validator crashes. Set up log rotation for both Fail2ban and auth logs:
 
 ```bash
+# Rotate Fail2ban logs — keep 7 days
 sudo tee /etc/logrotate.d/fail2ban << 'EOF'
 /var/log/fail2ban.log {
     daily
@@ -218,9 +219,20 @@ sudo tee /etc/logrotate.d/fail2ban << 'EOF'
     endscript
 }
 EOF
+
+# Rotate auth logs — keep 4 weeks
+sudo tee /etc/logrotate.d/validator-auth << 'EOF'
+/var/log/auth.log {
+    weekly
+    rotate 4
+    compress
+    missingok
+    notifempty
+}
+EOF
 ```
 
-This keeps 7 days of logs, compresses old ones, and auto-rotates daily. Restart to apply:
+Restart to apply:
 ```bash
 sudo systemctl restart fail2ban
 ```
