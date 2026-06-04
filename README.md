@@ -194,12 +194,33 @@ enabled = true
 port = 22
 maxretry = 3
 findtime = 600
-bantime = 3600
+bantime = -1
 ```
 
 > Note: Always specify `port = 22` (or `port = ssh`) in `jail.local` to avoid edge cases where Fail2ban checks the wrong port.
 
-This bans IPs after **3 failed attempts** within 10 minutes for **1 hour**. Restart to apply:
+This bans IPs after **3 failed attempts** within 10 minutes **permanently** (`bantime = -1` means no expiry).
+
+### Protect Against Log Flooding (Logrotate)
+
+If someone spams your server with thousands of attempts, Fail2ban logs every one — your disk fills up and your validator crashes. Set up log rotation:
+
+```bash
+sudo tee /etc/logrotate.d/fail2ban << 'EOF'
+/var/log/fail2ban.log {
+    daily
+    rotate 7
+    compress
+    missingok
+    notifempty
+    postrotate
+        fail2ban-client flushlogs >/dev/null
+    endscript
+}
+EOF
+```
+
+This keeps 7 days of logs, compresses old ones, and auto-rotates daily. Restart to apply:
 ```bash
 sudo systemctl restart fail2ban
 ```
