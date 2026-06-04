@@ -199,7 +199,7 @@ bantime = 86400
 
 > Note: Always specify `port = 22` (or `port = ssh`) in `jail.local` to avoid edge cases where Fail2ban checks the wrong port.
 
-This bans IPs after **3 failed attempts** within 10 minutes **permanently** (`bantime = 86400` means no expiry).
+This bans IPs after **3 failed attempts** within 10 minutes for **24 hours** (`bantime = 86400`).
 
 ### Protect Against Log Flooding (Logrotate)
 
