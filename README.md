@@ -201,6 +201,8 @@ bantime = 86400
 
 This bans IPs after **3 failed attempts** within 10 minutes for **24 hours** (`bantime = 86400`).
 
+> **Want to be more aggressive?** If you have a static IP, set `bantime = 604800` (7 days) or `bantime = -1` (permanent). Dynamic IP users (Starlink, CGNAT) should stick with 86400 — if your IP gets recycled from a previously banned bot, it self-heals within 24 hours instead of requiring manual intervention.
+
 ### Protect Against Log Flooding (Logrotate)
 
 If someone spams your server with thousands of attempts, Fail2ban logs every one — your disk fills up and your validator crashes. Set up log rotation for both Fail2ban and auth logs:
